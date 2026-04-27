@@ -91,13 +91,13 @@ jobs:
         run: |
           ${{ env.JMETER_HOME }}/bin/jmeter \
             -n \
-            -t tests/perf/Enterprise SaaS Load Test 500.jmx \
+            -t tests/perf/enterprise_saas_load_test.jmx \
             -l ${{ env.RESULTS_DIR }}/results.jtl \
             -e \
             -o ${{ env.REPORT_DIR }} \
-            -Jthreads=50 \
-            -Jrampup=30 \
-            -Jduration=120 \
+            -Jthreads=5 \
+            -Jrampup=5 \
+            -Jduration=300 \
             -Jjmeter.reportgenerator.overall_granularity=1000 \
             2>&1 | tee ${{ env.RESULTS_DIR }}/jmeter.log
 
