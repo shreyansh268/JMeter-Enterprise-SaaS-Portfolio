@@ -56,7 +56,7 @@ jobs:
   perf-smoke:
     name: Smoke Load Test (50 threads)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout repository
