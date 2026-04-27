@@ -1,0 +1,229 @@
+# ══════════════════════════════════════════════════════════════════════
+# JMeter Performance Gate — Enterprise SaaS Load Test
+# Author: Shreyansh Sharma
+#
+# Triggers:
+#   - Every PR to main (smoke: 50 threads, 2 min)
+#   - Nightly schedule (full: 500 threads, 5 min)
+#   - Manual dispatch (configurable threads/duration)
+#
+# SLOs:  p99 < 800ms | error rate < 1%
+# Target: JSONPlaceholder (simulated enterprise SaaS backend)
+# ══════════════════════════════════════════════════════════════════════
+
+name: JMeter Performance Gate
+
+on:
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/perf/**'
+      - '.github/workflows/perf-gate.yml'
+
+  schedule:
+    - cron: '0 1 * * *'      # nightly full suite at 01:00 UTC
+
+  workflow_dispatch:
+    inputs:
+      threads:
+        description: 'Number of concurrent threads'
+        required: false
+        default: '100'
+      rampup:
+        description: 'Ramp-up period in seconds'
+        required: false
+        default: '60'
+      duration:
+        description: 'Test duration in seconds'
+        required: false
+        default: '120'
+
+env:
+  JMETER_VERSION: 5.6.3
+  JMETER_HOME: ${{ github.workspace }}/apache-jmeter-5.6.3
+  RESULTS_DIR: ${{ github.workspace }}/results
+  REPORT_DIR: ${{ github.workspace }}/results/html-report
+  P99_SLO_MS: 800
+  ERROR_RATE_SLO: 0.01
+
+jobs:
+
+  # ──────────────────────────────────────────────
+  # JOB 1: Smoke test — every PR (fast, cheap)
+  # 50 threads | 30s ramp | 120s duration
+  # ──────────────────────────────────────────────
+  perf-smoke:
+    name: Smoke Load Test (50 threads)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Cache JMeter installation
+        id: cache-jmeter
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.JMETER_HOME }}
+          key: jmeter-${{ env.JMETER_VERSION }}
+
+      - name: Install JMeter
+        if: steps.cache-jmeter.outputs.cache-hit != 'true'
+        run: |
+          wget -q \
+            https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${{ env.JMETER_VERSION }}.tgz \
+            -O /tmp/jmeter.tgz
+          tar -xzf /tmp/jmeter.tgz -C ${{ github.workspace }}
+          echo "JMeter ${{ env.JMETER_VERSION }} installed"
+
+      - name: Create results directory
+        run: mkdir -p ${{ env.RESULTS_DIR }}
+
+      - name: Run smoke load test
+        run: |
+          ${{ env.JMETER_HOME }}/bin/jmeter \
+            -n \
+            -t tests/perf/enterprise_saas_500.jmx \
+            -l ${{ env.RESULTS_DIR }}/results.jtl \
+            -e \
+            -o ${{ env.REPORT_DIR }} \
+            -Jthreads=50 \
+            -Jrampup=30 \
+            -Jduration=120 \
+            -Jjmeter.reportgenerator.overall_granularity=1000 \
+            2>&1 | tee ${{ env.RESULTS_DIR }}/jmeter.log
+
+      - name: Assert SLO thresholds
+        run: python3 tests/perf/scripts/assert_slo.py \
+               --jtl ${{ env.RESULTS_DIR }}/results.jtl \
+               --p99-slo ${{ env.P99_SLO_MS }} \
+               --error-slo ${{ env.ERROR_RATE_SLO }} \
+               --run-label "PR Smoke — 50 threads"
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-smoke-report-${{ github.run_number }}
+          path: ${{ env.REPORT_DIR }}
+          retention-days: 14
+
+      - name: Upload JTL results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-smoke-jtl-${{ github.run_number }}
+          path: ${{ env.RESULTS_DIR }}/results.jtl
+          retention-days: 30
+
+      - name: Comment PR with results
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const log = fs.readFileSync('${{ env.RESULTS_DIR }}/jmeter.log', 'utf8');
+            const summary = log.split('\n')
+              .filter(l => l.includes('summary') || l.includes('Err'))
+              .slice(-5)
+              .join('\n');
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## 🔥 JMeter Smoke Test Results\n\`\`\`\n${summary}\n\`\`\`\nSLO: p99 < 800ms | Error rate < 1%\n[Download full report](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})`
+            });
+
+  # ──────────────────────────────────────────────
+  # JOB 2: Full load test — nightly or manual
+  # 500 threads | 120s ramp | 300s duration
+  # ──────────────────────────────────────────────
+  # perf-full:
+  #   name: Full Load Test (500 threads)
+  #   runs-on: ubuntu-latest
+  #   if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+  #   steps:
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v4
+
+  #     - name: Set up Java 17
+  #       uses: actions/setup-java@v4
+  #       with:
+  #         distribution: temurin
+  #         java-version: '17'
+
+  #     - name: Cache JMeter installation
+  #       id: cache-jmeter
+  #       uses: actions/cache@v4
+  #       with:
+  #         path: ${{ env.JMETER_HOME }}
+  #         key: jmeter-${{ env.JMETER_VERSION }}
+
+  #     - name: Install JMeter
+  #       if: steps.cache-jmeter.outputs.cache-hit != 'true'
+  #       run: |
+  #         wget -q \
+  #           https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${{ env.JMETER_VERSION }}.tgz \
+  #           -O /tmp/jmeter.tgz
+  #         tar -xzf /tmp/jmeter.tgz -C ${{ github.workspace }}
+
+  #     - name: Create results directory
+  #       run: mkdir -p ${{ env.RESULTS_DIR }}
+
+  #     - name: Set thread parameters
+  #       id: params
+  #       run: |
+  #         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+  #           echo "threads=${{ github.event.inputs.threads }}" >> $GITHUB_OUTPUT
+  #           echo "rampup=${{ github.event.inputs.rampup }}" >> $GITHUB_OUTPUT
+  #           echo "duration=${{ github.event.inputs.duration }}" >> $GITHUB_OUTPUT
+  #         else
+  #           echo "threads=500" >> $GITHUB_OUTPUT
+  #           echo "rampup=120" >> $GITHUB_OUTPUT
+  #           echo "duration=300" >> $GITHUB_OUTPUT
+  #         fi
+
+  #     - name: Run full load test
+  #       run: |
+  #         ${{ env.JMETER_HOME }}/bin/jmeter \
+  #           -n \
+  #           -t tests/perf/enterprise_saas_500.jmx \
+  #           -l ${{ env.RESULTS_DIR }}/results.jtl \
+  #           -e \
+  #           -o ${{ env.REPORT_DIR }} \
+  #           -Jthreads=${{ steps.params.outputs.threads }} \
+  #           -Jrampup=${{ steps.params.outputs.rampup }} \
+  #           -Jduration=${{ steps.params.outputs.duration }} \
+  #           2>&1 | tee ${{ env.RESULTS_DIR }}/jmeter.log
+
+  #     - name: Assert SLO thresholds
+  #       run: python3 tests/perf/scripts/assert_slo.py \
+  #              --jtl ${{ env.RESULTS_DIR }}/results.jtl \
+  #              --p99-slo ${{ env.P99_SLO_MS }} \
+  #              --error-slo ${{ env.ERROR_RATE_SLO }} \
+  #              --run-label "Full Load — ${{ steps.params.outputs.threads }} threads"
+
+  #     - name: Upload HTML report
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: jmeter-full-report-${{ github.run_number }}
+  #         path: ${{ env.REPORT_DIR }}
+  #         retention-days: 30
+
+  #     - name: Upload JTL results
+  #       if: always()
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: jmeter-full-jtl-${{ github.run_number }}
+  #         path: ${{ env.RESULTS_DIR }}/results.jtl
+  #         retention-days: 90
