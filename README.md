@@ -1,3 +1,6 @@
+<img width="838" height="369" alt="image" src="https://github.com/user-attachments/assets/269bbca8-d38b-4f0c-9d20-9ffdace6c6ed" />
+
+
 # Enterprise SaaS Load Test — JMeter
 **Author:** Shreyansh Sharma | QE Expert  
 **Target:** JSONPlaceholder (`jsonplaceholder.typicode.com`) — simulated enterprise REST API  
