@@ -91,7 +91,7 @@ jobs:
         run: |
           ${{ env.JMETER_HOME }}/bin/jmeter \
             -n \
-            -t tests/perf/enterprise_saas_load_test.jmx \
+            -t /enterprise_saas_load_test.jmx \
             -l ${{ env.RESULTS_DIR }}/results.jtl \
             -e \
             -o ${{ env.REPORT_DIR }} \
